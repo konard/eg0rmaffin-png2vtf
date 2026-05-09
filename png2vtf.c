@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
 #define PNG_DEBUG 3
 #include <png.h>
@@ -42,13 +43,14 @@ char *vtf_data;
 VTFHEADER vtf_header;
 
 void read_png_file(char* file_name) {
-  char header[8];    // 8 is the maximum size that can be checked
+  png_byte header[8];    // 8 is the maximum size that can be checked
 
   /* open file and test for it being a png */
   FILE *fp = fopen(file_name, "rb");
   if (!fp)
 	abort_("[read_png_file] File %s could not be opened for reading", file_name);
-  fread(header, 1, 8, fp);
+  if (fread(header, 1, 8, fp) != 8)
+	abort_("[read_png_file] File %s could not be read", file_name);
   if (png_sig_cmp(header, 0, 8))
 	abort_("[read_png_file] File %s is not recognized as a PNG file", file_name);
 
@@ -196,7 +198,7 @@ void init_vtf_header() {
 }
 
 void write_vtf_header(FILE *fp, const VTFHEADER *h) {
-    fwrite(&vtf_header, sizeof(VTFHEADER), 1, fp);
+    fwrite(h, sizeof(*h), 1, fp);
 }
 
 void write_vtf_file(char* file_name) {
