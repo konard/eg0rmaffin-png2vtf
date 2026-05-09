@@ -1,0 +1,10 @@
+# Build artifacts
+png2vtf
+*.o
+
+# Editor backups
+*~
+\#*\#
+
+# Local test/scratch outputs
+experiments/
