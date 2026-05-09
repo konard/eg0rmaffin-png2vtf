@@ -2,25 +2,21 @@
 ## http://twitter.com/maximeb
 ##
 
-include configure.mk
+CC      ?= cc
+CFLAGS  ?= -O2 -Wall -Wextra
+CFLAGS  += $(shell pkg-config --cflags libpng)
+LDLIBS  += $(shell pkg-config --libs libpng) -lm
 
-CC				= gcc
-SOURCES_PNG2VTF	= png2vtf.c
-OBJS_PNG2VTF	= $(SOURCES_PNG2VTF:.c=.o)
-CFLAGS			= -W -Wall -ggdb -DNDEBUG $(CONF_INCS)
-LIBS			= $(CONF_LIBS) -lpng
-EXEC			= png2vtf
+TARGET  = png2vtf
+SRC     = png2vtf.c
+HEADERS = vtf_format.h
 
-all: $(EXEC)
+all: $(TARGET)
 
-png2vtf: $(OBJS_PNG2VTF)
-	$(CC) $(CFLAGS) $(OBJS_PNG2VTF) $(LIBS) -o png2vtf
-
-%.o: %.c %.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(TARGET): $(SRC) $(HEADERS)
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDLIBS)
 
 clean:
-	rm -f $(OBJS_PNG2VTF) *~ \#*
+	rm -f $(TARGET) *.o *~ \#*
 
-distclean: clean
-	rm -f $(EXEC)
+.PHONY: all clean
