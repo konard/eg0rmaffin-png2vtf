@@ -80,6 +80,7 @@ enum VTF_TEXTURE_FLAG
 
 
 
+#pragma pack(push, 1)
 typedef struct tagVTFHEADER
 {
 	char		signature[4];		// File signature ("VTF\0").
@@ -101,4 +102,7 @@ typedef struct tagVTFHEADER
 	unsigned char	lowResImageHeight;	// Low resolution image height.
 	unsigned short	depth;			// Depth of the largest mipmap in pixels.
 						// Must be a power of 2. Can be 0 or 1 for a 2D texture (v7.2 only).
+	unsigned char	padding2[15];		// Trailing pad so the on-disk header is 80 bytes
+						// (16-byte aligned), as required by the VTF 7.2 spec.
 } VTFHEADER;
+#pragma pack(pop)

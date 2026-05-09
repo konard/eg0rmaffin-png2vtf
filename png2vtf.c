@@ -1,12 +1,15 @@
 /*
- * Copyright 2002-2010 Based on a libpng example writtent by Guillaume
- * Cottenceau. Modified by Maxime Biais to transform it to a
- * non-premultiplied alpha TO premultiplied alpha converter.
- * http://twitter.com/maximeb
+ * png2vtf - convert a PNG to a Valve Texture Format (VTF) file.
+ *
+ * Default behaviour produces a full-color L4D2-compatible spray
+ * (BGRA8888, no mipmaps). The legacy alpha-only output is still
+ * available via "--format a8".
+ *
+ * Originally based on a libpng example by Guillaume Cottenceau,
+ * adapted by Maxime Biais (http://twitter.com/maximeb).
  *
  * This software may be freely redistributed under the terms
  * of the X11 license.
- *
  */
 
 #include <unistd.h>
@@ -20,210 +23,271 @@
 #include <png.h>
 #include "vtf_format.h"
 
-void abort_(const char * s, ...) {
-  va_list args;
-  va_start(args, s);
-  vfprintf(stderr, s, args);
-  fprintf(stderr, "\n");
-  va_end(args);
-  exit(1);
+static void abort_(const char *s, ...) {
+    va_list args;
+    va_start(args, s);
+    vfprintf(stderr, s, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+    exit(1);
 }
 
-int x, y;
+static int width, height;
+static png_byte color_type;
+static png_byte bit_depth;
 
-int width, height;
-png_byte color_type;
-png_byte bit_depth;
+static png_structp png_ptr;
+static png_infop info_ptr;
+static png_bytep *row_pointers;
 
-png_structp png_ptr;
-png_infop info_ptr;
-int number_of_passes;
-png_bytep *row_pointers;
-char *vtf_data;
-VTFHEADER vtf_header;
+static unsigned char *vtf_data;
+static size_t vtf_data_size;
+static VTFHEADER vtf_header;
 
-void read_png_file(char* file_name) {
-  png_byte header[8];    // 8 is the maximum size that can be checked
+/* Output formats supported by the --format flag. */
+typedef enum {
+    OUT_FMT_BGRA8888 = 0, /* default */
+    OUT_FMT_RGBA8888,
+    OUT_FMT_A8
+} output_format_t;
 
-  /* open file and test for it being a png */
-  FILE *fp = fopen(file_name, "rb");
-  if (!fp)
-	abort_("[read_png_file] File %s could not be opened for reading", file_name);
-  if (fread(header, 1, 8, fp) != 8)
-	abort_("[read_png_file] File %s could not be read", file_name);
-  if (png_sig_cmp(header, 0, 8))
-	abort_("[read_png_file] File %s is not recognized as a PNG file", file_name);
-
-
-  /* initialize stuff */
-  png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-
-  if (!png_ptr)
-	abort_("[read_png_file] png_create_read_struct failed");
-
-  info_ptr = png_create_info_struct(png_ptr);
-  if (!info_ptr)
-	abort_("[read_png_file] png_create_info_struct failed");
-
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[read_png_file] Error during init_io");
-
-  png_init_io(png_ptr, fp);
-  png_set_sig_bytes(png_ptr, 8);
-
-  png_read_info(png_ptr, info_ptr);
-
-  width = png_get_image_width(png_ptr, info_ptr);
-  height = png_get_image_height(png_ptr, info_ptr);
-  color_type = png_get_color_type(png_ptr, info_ptr);
-  bit_depth = png_get_bit_depth(png_ptr, info_ptr);
-
-  number_of_passes = png_set_interlace_handling(png_ptr);
-  png_read_update_info(png_ptr, info_ptr);
-
-
-  /* read file */
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[read_png_file] Error during read_image");
-
-  row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * height);
-  for (y=0; y<height; y++)
-	row_pointers[y] = (png_byte*) malloc(png_get_rowbytes(png_ptr,info_ptr));
-
-  png_read_image(png_ptr, row_pointers);
-
-  fclose(fp);
+static int is_power_of_two(int v) {
+    return v > 0 && (v & (v - 1)) == 0;
 }
 
+static void read_png_file(const char *file_name) {
+    png_byte header[8];
 
-void write_png_file(char* file_name) {
-  /* create file */
-  FILE *fp = fopen(file_name, "wb");
-  if (!fp)
-	abort_("[write_png_file] File %s could not be opened for writing", file_name);
+    FILE *fp = fopen(file_name, "rb");
+    if (!fp)
+        abort_("[read_png_file] File %s could not be opened for reading", file_name);
+    if (fread(header, 1, 8, fp) != 8)
+        abort_("[read_png_file] File %s could not be read", file_name);
+    if (png_sig_cmp(header, 0, 8))
+        abort_("[read_png_file] File %s is not recognized as a PNG file", file_name);
 
+    png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (!png_ptr)
+        abort_("[read_png_file] png_create_read_struct failed");
 
-  /* initialize stuff */
-  png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    info_ptr = png_create_info_struct(png_ptr);
+    if (!info_ptr)
+        abort_("[read_png_file] png_create_info_struct failed");
 
-  if (!png_ptr)
-	abort_("[write_png_file] png_create_write_struct failed");
+    if (setjmp(png_jmpbuf(png_ptr)))
+        abort_("[read_png_file] Error during init_io");
 
-  info_ptr = png_create_info_struct(png_ptr);
-  if (!info_ptr)
-	abort_("[write_png_file] png_create_info_struct failed");
+    png_init_io(png_ptr, fp);
+    png_set_sig_bytes(png_ptr, 8);
 
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[write_png_file] Error during init_io");
+    png_read_info(png_ptr, info_ptr);
 
-  png_init_io(png_ptr, fp);
+    width = png_get_image_width(png_ptr, info_ptr);
+    height = png_get_image_height(png_ptr, info_ptr);
+    color_type = png_get_color_type(png_ptr, info_ptr);
+    bit_depth = png_get_bit_depth(png_ptr, info_ptr);
 
+    if (!is_power_of_two(width) || !is_power_of_two(height))
+        abort_("[read_png_file] Image %dx%d: width and height must be powers of two "
+               "(e.g. 256x256, 512x512)", width, height);
 
-  /* write header */
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[write_png_file] Error during writing header");
+    /* Normalise everything to 8-bit RGBA so the rest of the code can
+       treat each pixel as 4 bytes regardless of the input PNG layout. */
+    if (bit_depth == 16)
+        png_set_strip_16(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_PALETTE)
+        png_set_palette_to_rgb(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+        png_set_expand_gray_1_2_4_to_8(png_ptr);
+    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))
+        png_set_tRNS_to_alpha(png_ptr);
+    if (color_type == PNG_COLOR_TYPE_GRAY ||
+        color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        png_set_gray_to_rgb(png_ptr);
+    /* For RGB (no alpha), append a fully opaque alpha channel. */
+    png_set_filler(png_ptr, 0xFF, PNG_FILLER_AFTER);
 
-  png_set_IHDR(png_ptr, info_ptr, width, height,
-			   bit_depth, color_type, PNG_INTERLACE_NONE,
-			   PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+    (void) png_set_interlace_handling(png_ptr);
+    png_read_update_info(png_ptr, info_ptr);
 
-  png_write_info(png_ptr, info_ptr);
+    if (setjmp(png_jmpbuf(png_ptr)))
+        abort_("[read_png_file] Error during read_image");
 
+    row_pointers = (png_bytep *) malloc(sizeof(png_bytep) * height);
+    for (int y = 0; y < height; y++)
+        row_pointers[y] = (png_byte *) malloc(png_get_rowbytes(png_ptr, info_ptr));
 
-  /* write bytes */
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[write_png_file] Error during writing bytes");
+    png_read_image(png_ptr, row_pointers);
 
-  png_write_image(png_ptr, row_pointers);
-
-
-  /* end write */
-  if (setjmp(png_jmpbuf(png_ptr)))
-	abort_("[write_png_file] Error during end of write");
-
-  png_write_end(png_ptr, NULL);
-
-  /* cleanup heap allocation */
-  for (y=0; y<height; y++)
-	free(row_pointers[y]);
-  free(row_pointers);
-
-  fclose(fp);
+    fclose(fp);
 }
 
-int is_not_premultiplied() {
-  if (png_get_color_type(png_ptr, info_ptr) == PNG_COLOR_TYPE_RGB)
-	abort_("[process_file] input file is PNG_COLOR_TYPE_RGB but must be"
-		   "PNG_COLOR_TYPE_RGBA (lacks the alpha channel)");
-  if (png_get_color_type(png_ptr, info_ptr) != PNG_COLOR_TYPE_RGBA)
-	abort_("[process_file] color_type of input file must be "
-		   "PNG_COLOR_TYPE_RGBA (%d) (is %d)",
-		   PNG_COLOR_TYPE_RGBA, png_get_color_type(png_ptr, info_ptr));
-  for (y = 0; y < height; y++) {
-	png_byte* row = row_pointers[y];
-	for (x = 0; x < width; x++) {
-	  png_byte* ptr = &(row[x*4]);
-	  if ((ptr[3] != 255) && (ptr[0] > ptr[3] || ptr[1] > ptr[3] \
-							  || ptr[2] > ptr[3]))
-		  return 0;
-	  }
-	}
-  return 1;
+static void free_row_pointers(void) {
+    if (!row_pointers) return;
+    for (int y = 0; y < height; y++)
+        free(row_pointers[y]);
+    free(row_pointers);
+    row_pointers = NULL;
 }
 
-void convert_file() {
+static void convert_file(output_format_t fmt) {
     printf("height=%d, width=%d\n", height, width);
-    vtf_data = malloc(sizeof(char) * height * width);
-    
-    for (y = 0; y < height; y++) {
-        png_byte* row = row_pointers[y];
-        for (x = 0; x < width; x++) {
-            png_byte* ptr = &(row[x*4]);
-            // printf("x=%d y=%d\n", x, y);
-            vtf_data[y*width +x] = (char) ptr[3]; // 0:r, 1:g, 2:b, 3:alpha
+
+    size_t pixels = (size_t) width * (size_t) height;
+    size_t bpp = (fmt == OUT_FMT_A8) ? 1 : 4;
+    vtf_data_size = pixels * bpp;
+    vtf_data = (unsigned char *) malloc(vtf_data_size);
+    if (!vtf_data)
+        abort_("[convert_file] out of memory");
+
+    for (int y = 0; y < height; y++) {
+        png_byte *row = row_pointers[y];
+        for (int x = 0; x < width; x++) {
+            png_byte *ptr = &row[x * 4]; /* row is RGBA after read_png_file */
+            unsigned char r = ptr[0];
+            unsigned char g = ptr[1];
+            unsigned char b = ptr[2];
+            unsigned char a = ptr[3];
+
+            size_t i = ((size_t) y * (size_t) width + (size_t) x) * bpp;
+            switch (fmt) {
+            case OUT_FMT_BGRA8888:
+                vtf_data[i + 0] = b;
+                vtf_data[i + 1] = g;
+                vtf_data[i + 2] = r;
+                vtf_data[i + 3] = a;
+                break;
+            case OUT_FMT_RGBA8888:
+                vtf_data[i + 0] = r;
+                vtf_data[i + 1] = g;
+                vtf_data[i + 2] = b;
+                vtf_data[i + 3] = a;
+                break;
+            case OUT_FMT_A8:
+                vtf_data[i] = a;
+                break;
+            }
         }
     }
 }
 
-void init_vtf_header() {
+static void init_vtf_header(output_format_t fmt) {
+    memset(&vtf_header, 0, sizeof(vtf_header));
+
     vtf_header.signature[0] = 'V';
     vtf_header.signature[1] = 'T';
     vtf_header.signature[2] = 'F';
     vtf_header.signature[3] = 0;
     vtf_header.version[0] = 7;
     vtf_header.version[1] = 2;
-    vtf_header.width = log(width) / log(2);
-    vtf_header.height = log(height) / log(2);
-    vtf_header.highResImageFormat = IMAGE_FORMAT_A8;
+    vtf_header.headerSize = sizeof(VTFHEADER); /* 80 */
+    vtf_header.width = (unsigned short) width;
+    vtf_header.height = (unsigned short) height;
+    vtf_header.frames = 1;
+    vtf_header.firstFrame = 0;
+    vtf_header.reflectivity[0] = 1.0f;
+    vtf_header.reflectivity[1] = 1.0f;
+    vtf_header.reflectivity[2] = 1.0f;
+    vtf_header.bumpmapScale = 1.0f;
+    vtf_header.mipmapCount = 1;
+    /* No low-res thumbnail. */
+    vtf_header.lowResImageFormat = (unsigned int) IMAGE_FORMAT_NONE; /* 0xFFFFFFFF */
+    vtf_header.lowResImageWidth = 0;
+    vtf_header.lowResImageHeight = 0;
+    vtf_header.depth = 1;
+
+    /* Sensible flags for a 2D spray decal. */
+    vtf_header.flags = TEXTUREFLAGS_NOMIP | TEXTUREFLAGS_NOLOD |
+                       TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT |
+                       TEXTUREFLAGS_EIGHTBITALPHA;
+
+    switch (fmt) {
+    case OUT_FMT_BGRA8888:
+        vtf_header.highResImageFormat = IMAGE_FORMAT_BGRA8888;
+        break;
+    case OUT_FMT_RGBA8888:
+        vtf_header.highResImageFormat = IMAGE_FORMAT_RGBA8888;
+        break;
+    case OUT_FMT_A8:
+        vtf_header.highResImageFormat = IMAGE_FORMAT_A8;
+        /* A8 has no real RGB color, so no eight-bit-alpha hint flag. */
+        vtf_header.flags = TEXTUREFLAGS_NOMIP | TEXTUREFLAGS_NOLOD |
+                           TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT;
+        break;
+    }
 }
 
-void write_vtf_header(FILE *fp, const VTFHEADER *h) {
+static void write_vtf_header(FILE *fp, const VTFHEADER *h) {
     fwrite(h, sizeof(*h), 1, fp);
 }
 
-void write_vtf_file(char* file_name) {
-    init_vtf_header();
-    /* create file */
+static void write_vtf_file(const char *file_name, output_format_t fmt) {
+    init_vtf_header(fmt);
+
     FILE *fp = fopen(file_name, "wb");
     if (!fp)
         abort_("File %s could not be opened for writing", file_name);
 
-    // write header
     write_vtf_header(fp, &vtf_header);
-    // write data
-    fwrite(vtf_data, 1, height * width, fp);
+    fwrite(vtf_data, 1, vtf_data_size, fp);
     free(vtf_data);
+    vtf_data = NULL;
     fclose(fp);
 }
 
+static void usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s [--format <bgra8888|rgba8888|a8>] <input.png> <output.vtf>\n"
+        "\n"
+        "Default format is bgra8888 (full-color, L4D2-compatible spray).\n",
+        prog);
+}
 
 int main(int argc, char **argv) {
-  if (argc != 3)
-	abort_("Usage: program_name <file_in> <file_out>");
+    output_format_t fmt = OUT_FMT_BGRA8888;
+    const char *in_path = NULL;
+    const char *out_path = NULL;
 
-  read_png_file(argv[1]);
-  convert_file();
-  write_vtf_file(argv[2]);
+    int positional = 0;
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--format") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                abort_("--format requires an argument");
+            }
+            const char *v = argv[++i];
+            if (strcmp(v, "bgra8888") == 0) fmt = OUT_FMT_BGRA8888;
+            else if (strcmp(v, "rgba8888") == 0) fmt = OUT_FMT_RGBA8888;
+            else if (strcmp(v, "a8") == 0) fmt = OUT_FMT_A8;
+            else {
+                usage(argv[0]);
+                abort_("Unknown --format value: %s", v);
+            }
+        } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if (positional == 0) {
+            in_path = arg;
+            positional++;
+        } else if (positional == 1) {
+            out_path = arg;
+            positional++;
+        } else {
+            usage(argv[0]);
+            abort_("Unexpected argument: %s", arg);
+        }
+    }
 
-  return 0;
+    if (!in_path || !out_path) {
+        usage(argv[0]);
+        abort_("Missing input or output file");
+    }
+
+    read_png_file(in_path);
+    convert_file(fmt);
+    write_vtf_file(out_path, fmt);
+    free_row_pointers();
+
+    return 0;
 }
