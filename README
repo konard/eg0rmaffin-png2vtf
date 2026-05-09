@@ -1,14 +1,50 @@
-What ?
-======
+png2vtf
+=======
 
-This tool permits to convert alpha png file to a pseudo-VTF file
-format in IMAGE_FORMAT_A8.
+A small utility that converts an RGBA PNG file into a pseudo-VTF
+(Valve Texture Format) file using `IMAGE_FORMAT_A8`.
 
-How to compile and run the C version
-====================================
-edit the configure.mk file to make CONF_INCS and CONF_LIBS links to
-your libpng installation directory.
+Note: this is **not** a general-purpose full-color PNG-to-VTF
+converter. Only the alpha channel of the input PNG is preserved; the
+RGB channels are discarded. The input must be an RGBA PNG
+(`PNG_COLOR_TYPE_RGBA`).
 
-$ make
-$ png2vtf in.png out.vtf
 
+Dependencies
+============
+
+A C compiler, `make`, `pkg-config`, and `libpng` are required.
+
+Arch Linux:
+
+    sudo pacman -S base-devel libpng pkgconf
+
+Debian / Ubuntu:
+
+    sudo apt install build-essential libpng-dev pkg-config
+
+Fedora:
+
+    sudo dnf install gcc make libpng-devel pkgconf-pkg-config
+
+
+Build
+=====
+
+    make
+
+This uses `pkg-config` to discover the compiler and linker flags for
+`libpng`, so no manual configuration is required on a normal Linux
+system.
+
+
+Usage
+=====
+
+    ./png2vtf input.png output.vtf
+
+
+Clean
+=====
+
+    make clean
