@@ -4,7 +4,9 @@ png2vtf
 A small utility that converts a PNG file into a Valve Texture Format
 (VTF) file suitable for use as a Left 4 Dead 2 / Source Engine spray.
 
-By default, `png2vtf` writes a full-color VTF using
+By default `png2vtf` accepts an ordinary PNG of any dimensions, scales
+it proportionally to fit inside a 256x256 canvas, centers it with
+transparent padding, and writes a full-color VTF using
 `IMAGE_FORMAT_BGRA8888`. Both RGB and RGBA PNGs are accepted; if the
 PNG has no alpha channel, fully opaque alpha is added automatically.
 
@@ -17,7 +19,8 @@ spray.
 Dependencies
 ============
 
-A C compiler, `make`, `pkg-config`, and `libpng` are required.
+A C compiler, `make`, `pkg-config`, and `libpng` are required. No
+ImageMagick, no CMake, no extra runtime tools.
 
 Arch Linux:
 
@@ -45,22 +48,43 @@ system.
 Usage
 =====
 
-Default — full-color L4D2 spray:
+The simple default flow just works on any PNG:
 
-    ./png2vtf input.png output.vtf
+    ./png2vtf input.png myspray.vtf
 
-Pick a specific format explicitly:
+What this does automatically:
 
-    ./png2vtf --format bgra8888 input.png output.vtf   # default
-    ./png2vtf --format rgba8888 input.png output.vtf
-    ./png2vtf --format a8       input.png output.vtf   # legacy, alpha-only
+* decodes the PNG (RGB, RGBA, grayscale, palette, anything libpng
+  understands) and converts it to RGBA;
+* scales it proportionally with bilinear filtering to fit inside a
+  256x256 canvas;
+* centers it on a transparent canvas (no distortion);
+* writes a full-color BGRA8888 VTF with the correct flags for use as
+  an L4D2 spray.
 
-Input requirements:
+You no longer need to pre-resize, pre-pad, or force the input to a
+power-of-two size by hand.
 
-* The PNG may be RGB or RGBA. RGB inputs are converted to RGBA with
-  fully opaque alpha; RGBA inputs preserve their alpha channel.
-* Width and height must each be a power of two (e.g. 256x256,
-  512x512). Non-power-of-two images are rejected with a clear error.
+Optional flags:
+
+    ./png2vtf --size 512 input.png output.vtf       # 512x512 canvas
+    ./png2vtf --fit contain input.png output.vtf    # default
+    ./png2vtf --fit cover   input.png output.vtf    # crop to fill
+    ./png2vtf --fit stretch input.png output.vtf    # distort to fill
+    ./png2vtf --format bgra8888 input.png out.vtf   # default
+    ./png2vtf --format rgba8888 input.png out.vtf
+    ./png2vtf --format a8       input.png out.vtf   # legacy
+
+`--size` accepts powers of two (e.g. `64`, `128`, `256`, `512`) to
+match the VTF format requirement that texture dimensions be powers
+of two.
+
+Fit modes:
+
+* `contain` (default) — preserve aspect ratio, fit the entire image
+  into the canvas, transparent padding around the short side.
+* `cover` — preserve aspect ratio, fill the canvas, crop overflow.
+* `stretch` — resize directly to the canvas, may distort.
 
 
 L4D2 spray workflow
@@ -70,7 +94,8 @@ L4D2 spray workflow
 
        make
 
-2. Convert your PNG to a full-color VTF spray:
+2. Convert your PNG to a full-color VTF spray (any input dimensions
+   work):
 
        ./png2vtf input.png myspray.vtf
 
