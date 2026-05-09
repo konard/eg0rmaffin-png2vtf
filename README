@@ -1,13 +1,17 @@
 png2vtf
 =======
 
-A small utility that converts an RGBA PNG file into a pseudo-VTF
-(Valve Texture Format) file using `IMAGE_FORMAT_A8`.
+A small utility that converts a PNG file into a Valve Texture Format
+(VTF) file suitable for use as a Left 4 Dead 2 / Source Engine spray.
 
-Note: this is **not** a general-purpose full-color PNG-to-VTF
-converter. Only the alpha channel of the input PNG is preserved; the
-RGB channels are discarded. The input must be an RGBA PNG
-(`PNG_COLOR_TYPE_RGBA`).
+By default, `png2vtf` writes a full-color VTF using
+`IMAGE_FORMAT_BGRA8888`. Both RGB and RGBA PNGs are accepted; if the
+PNG has no alpha channel, fully opaque alpha is added automatically.
+
+The legacy alpha-only behavior (`IMAGE_FORMAT_A8`) is still available
+behind the `--format a8` flag, but it is **no longer the default**:
+A8 stores only the alpha channel and is unusable as a normal visible
+spray.
 
 
 Dependencies
@@ -41,7 +45,52 @@ system.
 Usage
 =====
 
+Default — full-color L4D2 spray:
+
     ./png2vtf input.png output.vtf
+
+Pick a specific format explicitly:
+
+    ./png2vtf --format bgra8888 input.png output.vtf   # default
+    ./png2vtf --format rgba8888 input.png output.vtf
+    ./png2vtf --format a8       input.png output.vtf   # legacy, alpha-only
+
+Input requirements:
+
+* The PNG may be RGB or RGBA. RGB inputs are converted to RGBA with
+  fully opaque alpha; RGBA inputs preserve their alpha channel.
+* Width and height must each be a power of two (e.g. 256x256,
+  512x512). Non-power-of-two images are rejected with a clear error.
+
+
+L4D2 spray workflow
+===================
+
+1. Build:
+
+       make
+
+2. Convert your PNG to a full-color VTF spray:
+
+       ./png2vtf input.png myspray.vtf
+
+3. Place the resulting file at:
+
+       left4dead2/materials/vgui/logos/custom/myspray.vtf
+
+4. Create a matching `myspray.vmt` next to it:
+
+       "UnlitGeneric"
+       {
+           "$basetexture" "vgui/logos/custom/myspray"
+           "$translucent" "1"
+           "$vertexcolor" "1"
+           "$vertexalpha" "1"
+       }
+
+5. In game, select it via:
+
+       cl_logofile "materials/vgui/logos/custom/myspray.vtf"
 
 
 Clean
